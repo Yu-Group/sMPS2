@@ -1,0 +1,10 @@
+data/*
+scripts_savio/*
+results_final/*
+notebooks/figures/*
+*/.ipynb_checkpoints/*
+.Rproj.user
+*.Rproj
+*/__pycache__/*
+*.DS_Store
+*/.idea/*
