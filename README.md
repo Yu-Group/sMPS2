@@ -19,7 +19,7 @@ In this work, we developed and rigorously stress-tested a novel non-invasive bio
 	- To run the full pipeline, the "driver" scripts should be run in sequential order, i.e., first [01_driver.sh](./scripts/01_driver_train_prediction_methods.sh), then [02_driver.sh](./scripts/02_driver_aggregate_train_results.sh), then [03_driver.sh](./scripts/03_driver_evaluate_prediction_methods.sh), then [04_driver.sh](./scripts/04_driver_aggregate_eval_results.sh)
 - **[model_config/](./model_config/)**: model configuration file, specifying the models, hyperparameters, and feature importances under study
 - **[functions/](./functions/)**: contains all functions necessary to reproduce sMPS model development pipeline
-- **[notebooks/](./notebooks/)**: contains files to reproduce [supplementary PCS documentation](yu-group.github.io/sMPS2/)
+- **[notebooks/](./notebooks/)**: contains files to reproduce [supplementary PCS documentation](https://yu-group.github.io/sMPS2/)
 
 ## Citation
 
