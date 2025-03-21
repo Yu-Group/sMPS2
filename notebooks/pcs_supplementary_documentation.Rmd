@@ -1,0 +1,955 @@
+---
+title: "PCS documentation for the simplified MyProstateScore2.0 (sMPS2)"
+# author: "Tiffany M. Tang"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+bibliography: bibliography.bib
+output: 
+  vthemes::vmodern:
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+options(width = 10000)
+knitr::opts_chunk$set(
+  echo = FALSE, 
+  warning = FALSE, 
+  message = FALSE,
+  cache = FALSE,
+  fig.align = "center",
+  fig.pos = "H",
+  # fig.show = "hold",
+  fig.height = 12,
+  fig.width = 10
+)
+
+library(patchwork)
+
+RESULTS_PATH <- "../results"
+DATA_PATH <- "../data"
+FIGURES_PATH <- "../paper_figures"
+
+PIPELINES <- c(
+  "Base" = "original",
+  "No Sample Exclusion" = "no_sample_filtering", 
+  "Ct Limit = 40" = "ct40",
+  "Norm. Ct Limit = -21" = "normct21"
+)
+REPS <- 1:10
+TOPK_MODES <- c(
+  "Model-specific" = "naive",
+  "Model-ensembled" = "ensemble",
+  "PCS-ensembled" = "pcs"
+)
+
+subchunk_idx <- 1
+fig_height <- 6
+fig_width <- 14
+
+rename_methods <- function(method) {
+  dplyr::case_when(
+    method == "logistic" ~ "Logistic",
+    method == "elnet" ~ "Logistic\nElastic Net",
+    method == "ridge" ~ "Logistic\nRidge",
+    method == "lasso" ~ "Logistic\nLasso",
+    method == "randf" ~ "RF",
+    method == "rfplus" ~ "RF+",
+    method == "figs" ~ "FIGS",
+    method == "gb" ~ "GBDT",
+    method == "rulefit" ~ "RuleFit",
+    TRUE ~ method
+  )
+}
+
+rename_pipelines <- function(pipeline) {
+  dplyr::case_when(
+    pipeline == "original" ~ "Base",
+    pipeline == "no_sample_filtering" ~ "No Sample Exclusion",
+    pipeline == "ct40" ~ "Ct Limit = 40",
+    pipeline == "normct21" ~ "Norm. Ct Limit = -21"
+  )
+}
+
+rename_cols <- function(col) {
+  out <- rename_methods(col)
+  dplyr::case_when(
+    out == "fold_id" ~ "Fold ID",
+    out == "auroc" ~ "AUROC",
+    out == "auprc" ~ "AUPRC",
+    out == "var" ~ "Variable",
+    out == "varname" ~ "Variable Name",
+    out == "eval_type" ~ "Evaluation Type",
+    out == "k" ~ "# Top Features",
+    out == "sample_id" ~ "Sample ID",
+    TRUE ~ R.utils::capitalize(out)
+  )
+}
+
+panel_class <- "panel panel-default padded-panel"
+padded_panel_class <- "panel panel-default padded-panel"
+
+metrics <- c("AUROC", "AUPRC", "Accuracy")
+id_cols <- c("Rep", "Fold ID", "Metric")
+img_types <- c("pdf")
+```
+
+```{css}
+.btn-toolbar {
+  display: none;
+}
+
+.figure p.caption {
+  font-size: 90%;
+  padding: 8px;
+}
+
+.figure {
+  display: inherit;
+}
+
+.citation {
+  color: #009688;
+}
+
+.csl-entry {
+  margin-bottom: 0.5em;
+}
+```
+
+# Overview
+
+<div class="panel panel-default padded-panel">
+In [@tang2024simplified](https://journals.sagepub.com/doi/10.1177/18758592241308755), we developed the simplified MyProstateScore2.0 (sMPS2), a 7-gene urine test which achieves similar state-of-the-art diagnostic accuracy for predicting high-grade prostate cancer as the original 18-gene MyProstateScore2.0 (MPS2) [@tosoian2024development].
+This simplified biomarker test provides a more cost-effective alternative to the original MPS2 test and greatly increases its accessibility for routine clinical care. 
+
+In this PCS documentation [@yu2020veridical], we expand upon the sMPS2 model development pipeline, transparently documenting and justifying human judgment calls (including data preprocessing and modeling decisions) when possible. 
+We also provide additional visualizations and stability analyses to further support the robustness and generalizability of the sMPS2 test.
+</div>
+
+# Exploratory Data Analysis {.tabset .tabset-vmodern}
+
+<div class="panel panel-default padded-panel">
+In this section, we provide a brief exploration of the Development Cohort data, which was used to develop the simplified MyProstateScore2.0 (sMPS2) test. This Development Cohort consists of 761 samples and was used to build the original MPS2 models [@tosoian2024development].
+
+Below, we visualize the (marginal) distribution of each gene and clinical variable, grouped by prostate cancer (PCa) grade. Some interesting observations:
+
+- The expression of some genes, such as *PCA3* and *T2:ERG* (used in the original MPS test [@tomlins2011urine]), show clear differences between low- and high-grade prostate cancers (Figure \@ref(fig:subchunk-2)).
+- While PSA, by itself, appears to have limited diagnostic accuracy in this cohort, prostate volume shows greater potential for distinguishing between low- and high-grade PCa (Figure \@ref(fig:subchunk-4)).
+- We emphasize that these are merely observations based on marginal analyses. More formal analyses will be conducted in subsequent sections.
+
+We also plot a correlation heatmap (Figure \@ref(fig:subchunk-3)), showing the pairwise relationships between two genes' expressions (as measured via their Ct values). This correlation heatmap shows that there are indeed strong positive correlations between groups of genes, which can complicate the interpretation and affect the stability of feature importances.
+</div>
+
+```{r results = "asis"}
+data <- data.table::fread(
+  file.path(DATA_PATH, "data_original.csv")
+) |> 
+  tibble::as_tibble() |> 
+  tibble::column_to_rownames("V1") |> 
+  dplyr::mutate(
+    grouping = stringr::str_to_title(grouping)
+  )
+clin_vars <- c(
+  "Age" = "age",
+  "African-American" = "aa",
+  "Family History of PCa" = "fhx",
+  "Abnormal DRE" = "dre_abnl",
+  "Prior Negative Biopsy" = "bx_prior_neg",
+  "PSA" = "psa",
+  "Prostate Volume" = "prostate_volume"
+)
+y <- data$grouping
+
+cat("\n\n## Primary Outcome {.unnumbered}\n\n")
+tab <- data |> 
+  dplyr::group_by(grouping) |>
+  dplyr::summarise(
+    Frequency = dplyr::n()
+  ) |> 
+  dplyr::rename(
+    "PCa Grade" = grouping
+  ) |> 
+  vthemes::pretty_DT(
+    rownames = FALSE,
+    options = list(dom = "t", ordering = FALSE)
+  )
+vthemes::subchunkify(
+  tab, i = subchunk_idx, add_class = panel_class,
+  caption = "'Number of high-grade and low-grade prostate cancer (PCa) patients in Development Cohort.'"
+)
+subchunk_idx <- subchunk_idx + 1
+
+cat("\n\n## Gene Expression Data {.unnumbered}\n\n")
+gene_data <- data |> 
+  dplyr::select(
+    -tidyselect::all_of(clin_vars)
+  )
+plt <- gene_data |> 
+  tidyr::pivot_longer(
+    cols = -grouping,
+    names_to = "Gene", 
+    values_to = "Ct Value"
+  ) |> 
+  vdocs::plot_density(
+    x_str = "Ct Value", fill_str = "grouping", 
+    theme_options = list(size_preset = "medium")
+  ) +
+  ggplot2::facet_wrap(~ Gene, scales = "free") +
+  ggplot2::labs(fill = "PCa Grade")
+vthemes::subchunkify(
+  plt, i = subchunk_idx,
+  fig_height = 15, fig_width = 18, 
+  add_class = panel_class,
+  caption = "'Distribution of Ct values in Development Cohort for each gene by prostate cancer (PCa) grade.'"
+)
+subchunk_idx <- subchunk_idx + 1
+
+plt <- gene_data |> 
+  dplyr::select(-grouping) |> 
+  vdocs::plot_cor_heatmap(
+    x_text_angle = TRUE, size_preset = "medium"
+  ) +
+  ggplot2::labs(
+    x = "Gene", y = "Gene", fill = "Pearson\nCorrelation"
+  )
+vthemes::subchunkify(
+  plotly::ggplotly(plt), i = subchunk_idx,
+  fig_height = 9, fig_width = fig_width, 
+  add_class = padded_panel_class, other_args = "out.width='100%'",
+  caption = "'Correlation heatmap of gene expression (Ct values) in Development Cohort data. Genes have been clustered using hierarchical clustering.'"
+)
+subchunk_idx <- subchunk_idx + 1
+
+cat("\n\n## Clinical Variables {.unnumbered}\n\n")
+clin_data <- data |> 
+  dplyr::select(
+    tidyselect::all_of(clin_vars), grouping
+  )
+continuous_clin_vars <- c(
+  "Age",
+  "PSA",
+  "Prostate Volume"
+)
+discrete_clin_vars <- c(
+  "African-American", 
+  "Family History of PCa",
+  "Abnormal DRE", 
+  "Prior Negative Biopsy"
+)
+plt_ls <- list()
+for (var_name in discrete_clin_vars) {
+  plt_ls[[var_name]] <- clin_data |> 
+    dplyr::mutate(
+      dplyr::across(
+        tidyselect::all_of(var_name), 
+        ~ as.factor(.x)
+      )
+    ) |> 
+    vdocs::plot_bar(
+      x_str = var_name, fill_str = "grouping",
+      theme_options = list(size_preset = "medium")
+    ) +
+    ggplot2::labs(
+      fill = "PCa Grade"
+    ) +
+    ggplot2::guides(fill = "none")
+}
+for (var_name in continuous_clin_vars) {
+  plt_ls[[var_name]] <- clin_data |> 
+    vdocs::plot_density(
+      x_str = var_name, fill_str = "grouping", 
+      theme_options = list(size_preset = "medium")
+    ) +
+    ggplot2::labs(
+      fill = "PCa Grade"
+    )
+}
+plt <- patchwork::wrap_plots(plt_ls, guides = "collect", nrow = 2)
+vthemes::subchunkify(
+  plt, i = subchunk_idx,
+  fig_height = 8, fig_width = 14, 
+  add_class = panel_class,
+  caption = "'Distribution of clinical features in Development Cohort by prostate cancer (PCa) grade.'"
+)
+subchunk_idx <- subchunk_idx + 1
+```
+
+# Data Preprocessing Choices {.tabset .tabset-vmodern}
+
+<div class="panel panel-default padded-panel">
+As discussed in [@tang2024simplified](https://journals.sagepub.com/doi/10.1177/18758592241308755), gene expression in each urine sample was measured via the cycle threshold (Ct) using qPCR profiling across 54 genes. 
+These 54 genes were previously nominated as potential biomarkers for prostate cancer (PCa) detection in the MPS2 study [@tosoian2024development] and are thus of interest here. 
+In what follows, we recap the data preprocessing procedure used in this study (also described in [@tang2024simplified](https://journals.sagepub.com/doi/10.1177/18758592241308755)) and provide additional justification for our judgment calls wherever possible.
+
+As a starting point, we preprocessed the expression data as in the original MPS2 study [@tosoian2024development]:
+
+1. We set the upper Ct value limit to 35. Specifically, Ct values greater than this limit were considered undetected and set to 35. Ct values from OpenArray that were "Undetermined" or "Inconclusive/No Amp" were also considered to be undetected and set to the upper Ct value limit of 35. 
+
+    - While it is arguably common practice to set the upper Ct value limit to 40, previous work has shown that setting the Ct value limit to 40 can often introduce unwanted biases and that setting this limit to 35 can effectively reduce this bias [@mccall2014non].
+  
+2. We computed the standard deviation (SD) across 3 technical replicates. If SD $\geq$ 1, the replicate farthest from the mean was removed; otherwise, all 3 replicates were kept. This is to help filter out poor quality replicates.
+3. We computed the average Ct value across the remaining technical replicates.
+4. All samples with an average Ct value of the reference gene *KLK3* above the 95th percentile were removed. 
+
+    - Note that *KLK3* is a well-known prostate marker. Hence, if the urine sample does not contain detectable levels of *KLK3* (i.e., the average Ct value for *KLK3* is high), it is unlikely that the sample will contain detectable levels of other prostate cancer biomarkers. We thus performed this filtering step to remove poor quality samples. 
+  
+5. We normalized the average Ct values for each target gene by *KLK3* using the formula -[ average Ct of gene *X* - average Ct of *KLK3* ]. 
+6. Finally, z-score scaling was applied to the normalized average Ct before downstream model development and feature selection.
+
+We refer to this data preprocessing pipeline as the **base preprocessing pipeline**. However, there are several alternative, but equally-reasonable ways to deal with undetectable Ct values and poor quality samples in the data preprocessing. While we cannot explore all possible preprocessing choices, we do explore a few alternatives in this work in order to improve the robustness of our model and conclusions. Namely, we considered the following alternative preprocessing pipelines:
+
+- **Ct limit = 40 preprocessing pipeline**: Rather than setting the upper Ct value limit to 35 for undetected replicates, we instead follow popular practice and set the upper Ct value limit to 40. All other preprocessing steps remain unchanged from the base preprocessing pipeline.
+- **Normalized Ct limit = -21 preprocessing pipeline**: In the aforementioned data preprocessing pipelines, the Ct values for undetected replicates were set prior to the normalization of the Ct values. Thus, the normalized Ct value for undetected replicates differs between genes. For comparison, in this preprocessing pipeline, we instead replace the Ct values for all undetected replicates after Ct normalization to have a constant value of -21 (which was the lowest Ct value post-normalization). All other preprocessing steps remain unchanged from the base preprocessing pipeline.
+- **No sample exclusion preprocessing pipeline**: Rather than excluding all samples with an average Ct value of the reference gene *KLK3* above the 95th percentile, this preprocessing pipeline does not exclude any samples based upon their Ct value for the reference gene *KLK3*. This is to assess whether or not the exclusion of samples based upon their Ct value for the reference gene KLK3 impacts downstream conclusions. All other data preprocessing steps remain unchanged from the base preprocessing pipeline.
+
+In addition to these preprocessed gene expression data, we also have access to various clinical data for each sample. We chose to focus on the following clinical variables for model development, as they are both known to be associated with high-grade prostate cancer and generally available in clinical practice: age, race, family history of prostate cancer, abnormal DRE, prior negative biopsy, and prostate specific antigen (PSA) [@thompson2006assessing].
+</div>
+
+# Modeling Choices {.tabset .tabset-vmodern}
+
+<div class="panel panel-default padded-panel">
+For each preprocessed dataset, we trained many different statistical/machine learning models to predict high-grade prostate cancer (PCa). Specifically, we considered the following models:
+
+**Logistic-based Models**:
+
+- Logistic regression
+- Logistic regression with $L_1$ (LASSO) regularization
+- Logistic regression with $L_2$ (ridge) regularization
+- Logistic regression with combined $L_1$ + $L_2$ (elastic net) regularization
+
+**Tree-based Models**:
+
+- Random forests (RF)
+- Gradient boosting decision trees (GBDT)
+- RuleFit
+- Random forests+ (RF+)
+- Fast interpretable greedy-tree sums (FIGS)
+
+We focused on these logistic- and tree-based models given the importance of interpretability and our goal of identifying important genes for reliable biomarker development. 
+While the logistic-based models are generally thought to serve as baseline models, the tree-based models can provide greater flexibility to capture more complex relationships between genes and the outcome of interest without sacrificing interpretability. 
+We note that other flexible but interpretable machine learning models could also be considered and may be of interest in future work. 
+However, in this current work, we chose to first focus on these logistic-based models and tree-based models -- the latter of which is often uniquely suited for biological tasks such as this, in part due to the resemblance between the thresholding behavior of decision trees and the on-off switch-like behavior commonly thought to govern genetic processes [@nelson2008lehninger].
+
+We detailed the hyperparameters and python implementation used for each model in Table 1 in [@tang2024simplified](https://journals.sagepub.com/doi/10.1177/18758592241308755). Hyperparameters were tuned using 5-fold cross-validation.
+</div>
+
+# Prediction Check {.tabset .tabset-vmodern}
+
+<div class="panel panel-default padded-panel">
+As the first step in the sMPS2 model development pipeline, we performed a prediction check to filter out models which have poor prediction performance and thus may not accurately reflect reality [@yu2020veridical]. Here, guided by the PCS framework, we use prediction performance as a reality check and a minimum requirement for interpretability. Moreover, we assess the prediction performance, not only for different models but also for different data preprocessing pipelines. Examining multiple prediction metrics (i.e., area under the receiver operating characteristic (AUROC), area under the precision-recall curve (AUPRC), and classification accuracy), we found that:
+
+- The prediction performance was quite stable across different data preprocessing pipelines. Notably, the variation in prediction performance across data preprocessing pipelines (blue barplot) was substantially smaller than the variation in prediction performance across models (pink barplot). These observations suggest that downstream conclusions are robust to these data preprocessing choices. 
+- Ordinary logistic regression appears to have reasonable prediction performance (only $\sim 1\%$ lower than the best-performing model in terms of AUROC). Given its simplicity, we chose to use logistic regression as the baseline model to determine whether or not other models passed the prediction check.
+- RuleFit, GBDT, and FIGS, on average, performed worse than logistic regression across the different prediction performance metrics, suggesting that they may not be appropriate fits for this data. RF also performed slightly worse than logistic regression on average. However, unlike RuleFit, GBDT, and FIGS, RF yielded higher prediction performance (measured via AUROC, AUPRC, and classification accuracy) than logistic regression in at least one data preprocessing pipeline. We thus excluded RuleFit, GBDT, and FIGS (but not RF) from the remainder of the model development pipeline.
+
+We defer additional methodological details on how this prediction check was conducted to [@tang2024simplified](https://journals.sagepub.com/doi/10.1177/18758592241308755).
+</div>
+
+```{r load-pcheck-results, results = "asis"}
+cv_errs_ls <- list()
+vimps_ls <- list()
+for (pipeline_idx in seq_along(PIPELINES)) {
+  pipeline_name <- names(PIPELINES)[pipeline_idx]
+  pipeline <- PIPELINES[pipeline_idx]
+  pipeline_dir <- file.path(RESULTS_PATH, pipeline, "train_with_clinical")
+  cv_errs <- data.table::fread(
+    file.path(pipeline_dir, "cv_errs_scaled.csv")
+  ) |>
+    tibble::as_tibble() |>
+    dplyr::mutate(
+      method = rename_methods(method)
+    ) |>
+    dplyr::rename_with(~ rename_cols(.x))
+  cv_errs_tib <- cv_errs |>
+    dplyr::mutate(
+      Pipeline = pipeline_name
+    )
+  cv_errs_ls <- c(cv_errs_ls, list(cv_errs_tib))
+  
+  agg_vimps <- data.table::fread(
+    file.path(pipeline_dir, "agg_vimps_scaled.csv")
+  ) |>
+    dplyr::mutate(
+      method = rename_methods(method)
+    ) |>
+    tibble::as_tibble() |>
+    dplyr::rename_with(~ rename_cols(.x))
+  agg_vimps_tib <- agg_vimps |>
+    dplyr::mutate(
+      Pipeline = pipeline_name
+    )
+  vimps_ls <- c(vimps_ls, list(agg_vimps_tib))
+}
+```
+
+```{r cv-errs, results = "asis"}
+alpha <- 0.05
+cv_errs_df <- dplyr::bind_rows(cv_errs_ls) |> 
+  dplyr::mutate(
+    Pipeline = factor(Pipeline, levels = rev(names(PIPELINES)))
+  )
+
+for (metric in metrics) {
+  cat(
+    sprintf(
+      "\n\n## %s {.unnumbered .tabset .tabset-pills .tabset-square}\n\n", 
+      metric
+    )
+  )
+  
+  method_order <- cv_errs_df |>
+    dplyr::group_by(Method) |>
+    dplyr::summarise(
+      mean = mean(.data[[metric]])
+    ) |>
+    dplyr::arrange(mean) |>
+    dplyr::pull(Method)
+  
+  cv_errs_summary <- cv_errs_df |>
+    dplyr::group_by(Pipeline, Method) |>
+    dplyr::summarise(
+      mean = mean(.data[[metric]]),
+      hiq = quantile(.data[[metric]], 1 - alpha / 2),
+      loq = quantile(.data[[metric]], alpha / 2),
+      .groups = "drop"
+    )
+  
+  err_plt <- cv_errs_summary |>
+    dplyr::mutate(
+      Method = factor(Method, levels = rev(method_order))
+    ) |> 
+    vdocs::plot_point(
+      x_str = "mean", y_str = "Pipeline",
+      theme_options = list(size_preset = "medium")
+    ) +
+    ggplot2::geom_errorbar(
+      ggplot2::aes(xmin = loq, xmax = hiq, y = Pipeline)
+    ) +
+    ggplot2::facet_grid(Method ~ .) +
+    ggplot2::labs(x = metric, y = "Data Preprocessing Pipeline") +
+    ggplot2::theme(
+      strip.text.y = ggplot2::element_text(
+        face = "bold", color = "white", size = 9
+      )
+    )
+  plt_ls[[metric]] <- err_plt
+  
+  cv_errs_summary_by_method <- cv_errs_summary |> 
+    dplyr::group_by(Method) |> 
+    dplyr::summarise(
+      range = max(mean) - min(mean),
+      mean = mean(mean)
+    ) |> 
+    dplyr::mutate(
+      mean = max(mean) - mean
+    )
+  y_limits <- c(0, max(cv_errs_summary_by_method$mean))
+  
+  dp_range_plt <- cv_errs_summary_by_method |> 
+    dplyr::mutate(
+      Method = factor(Method, levels = method_order)
+    ) |> 
+    vdocs::plot_bar(
+      x_str = "Method", y_str = "range", stat = "identity",
+      theme_options = list(size_preset = "medium")
+    ) +
+    ggplot2::scale_x_discrete(expand = c(0, 0)) +
+    ggplot2::scale_y_continuous(expand = c(0, 0), limits = y_limits) +
+    ggplot2::coord_flip() +
+    ggplot2::labs(
+      y = sprintf("Difference in Mean %s\nAcross Preprocessing Pipelines", metric)
+    ) +
+    ggplot2::theme(
+      axis.text.y = ggplot2::element_text(size = 12)
+    )
+  
+  method_range_plt <- cv_errs_summary_by_method |> 
+    dplyr::mutate(
+      Method = factor(Method, levels = method_order)
+    ) |> 
+    vdocs::plot_bar(
+      x_str = "Method", y_str = "mean", stat = "identity", fill = "#E8998D",
+      theme_options = list(size_preset = "medium")
+    ) +
+    ggplot2::scale_x_discrete(expand = c(0, 0)) +
+    ggplot2::scale_y_continuous(expand = c(0, 0), limits = y_limits) +
+    ggplot2::coord_flip() +
+    ggplot2::labs(
+      y = sprintf("Difference in Mean %s\nAcross Methods", metric)
+    ) +
+    ggplot2::theme(
+      axis.title.y = ggplot2::element_blank(),
+      axis.text.y = ggplot2::element_blank(),
+      axis.ticks.y = ggplot2::element_blank()
+    )
+  
+  plt <- patchwork::wrap_plots(
+    err_plt, dp_range_plt, method_range_plt, widths = c(1, 0.5, 0.5)
+  )
+  vthemes::subchunkify(
+    plt, i = subchunk_idx,
+    caption = sprintf("'(Left) For each choice of data preprocessing and prediction model, the validation %1$s, averaged across 4 CV folds and 10 repeated Development-Test splits, is shown. The error bars represent the inner %2$s%% quantile range of the distribution of %1$ss. (Middle, Right) We compare the variation in %1$s across data preprocessing pipelines and methods. In the middle subplot, we show the range of mean %1$ss across the four data preprocessing pipelines for each method. In the right subplot, we show the difference between the mean %1$s from each method and the best performing method (i.e., logistic regression with the elastic net penalty) across all data preprocessing pipelines. The difference in %1$ss across data preprocessing pipelines is substantially smaller than that across prediction methods, suggesting that the development pipeline and downstream findings are robust to data preprocessing choices.'", metric, (1 - alpha) * 100),
+    fig_height = 7.5, fig_width = 15, add_class = panel_class
+  )
+  subchunk_idx <- subchunk_idx + 1
+  
+  for (img_type in img_types) {
+    ggplot2::ggsave(
+      plt, 
+      filename = file.path(FIGURES_PATH, sprintf("cv_errors_%s.%s", metric, img_type)), 
+      width = 15, 
+      height = 7.5
+    )
+  }
+}
+```
+
+# Stability-driven Gene Ranking {.tabset .tabset-vmodern}
+
+<div class="panel panel-default padded-panel">
+After filtering out the poor-performing prediction models, we sought next to identify the topmost important genes, which were stably important across all four data preprocessing pipelines, six prediction-checked models, and ten Development-Test splits (i.e., $4 \times 6 \times 10 = 240$ combinations). Details on how we computed the gene importances for each model are discussed in [@tang2024simplified](https://journals.sagepub.com/doi/10.1177/18758592241308755). 
+
+We instead use this opportunity to conduct a stability analysis of the PCS-ensembled gene rankings. As discussed in [@tang2024simplified](https://journals.sagepub.com/doi/10.1177/18758592241308755), the obtained PCS-ensembled gene rankings are an ensemble of gene rankings across four different data preprocessing pipelines and six prediction-checked models (RF, RF+, logistic elastic net, logistic LASSO, logistic ridge, and ordinary logistic regression). We chose to use these six prediction models since each passed the prediction check. However, it is natural to wonder whether the PCS-ensembled gene rankings would change if a different subset of the prediction-checked prediction models were used. In particular, since the original set of prediction models consisted of four logistic-based models and two tree-based models, we investigated how the PCS-ensembled gene rankings would change if we used a "balanced" set of prediction models, composed of two logistic-based models and two tree-based models. 
+
+Below in the `Gene Ranking Summary` tab, we examined the PCS-ensembled gene rankings, ensembled across all four data preprocessing pipelines and
+
+- all six prediction-checked models (RF, RF+, logistic elastic net, logistic LASSO, logistic ridge, and ordinary logistic regression)
+- two logistic-based models (logistic elastic net and logistic ridge) and the two tree-based models (RF and RF+)
+- two logistic-based models with (logistic elastic net and logistic LASSO) and the two tree-based models (RF and RF+)
+- two logistic-based models with (logistic elastic net and logistic) and the two tree-based models (RF and RF+)
+
+Here, we chose to always include logistic elastic net in the PCS ensemble as it demonstrated the highest predictive power in the prediction check step.
+
+Takeaways from this stability analysis of the PCS-ensembled gene rankings:
+
+- Besides the shuffled ranking of *PCA3*, the top gene rankings are the same across the different PCS ensembles:
+  - Order of top-ranked genes when including all methods or the balanced ensemble with logistic elastic net, logistic, RF, and RF+: *T2:ERG*, *SCHLAP1*, *OR51E2*, *PCAT14*, *TFF3*, *PCA3*, *APOC1*
+  - Order of top-ranked genes using the two balanced method ensembles, excluding logistic regression: *T2:ERG*, *SCHLAP1*, *PCA3*, *OR51E2*, *PCAT14*, *TFF3*, *APOC1*
+- When ensembling across all six prediction-checked models, *PCA3* was the 5th ranked gene according to its mean rank, ranked in the top 5 in almost 50\% of the fits, but appeared to have mild instability (seen by the moderate SD of its ranking distribution) (Figure \@ref(fig:subchunk-8)). However, when excluding the ordinary logistic regression model (which performed worse than the regularized logistic regression models in the prediction check (Figure \@ref(fig:subchunk-5))) from the balanced PCS ensembles, *PCA3* became the 3rd ranked gene according to its mean rank, ranked in the top 5 in over 60\% of the fits, and exhibited far greater stability than before (Figures \@ref(fig:subchunk-9)-\@ref(fig:subchunk-10)). This boost in ranking and stability supports the case for including *PCA3* in the final sMPS2 model.
+- While *APOC1* appears to be a stably ranked top 10 gene in the initial PCS ensemble using all six prediction-checked models, we found that *APOC1* only appeared in the top 10 in approximately 50\% of the fits when using the balanced PCS ensembles (Figures \@ref(fig:subchunk-9)-\@ref(fig:subchunk-11)). The top 6 genes, in contrast, appeared in the top 10 in >70\% (and often >85\%) of the fits when using the balanced PCS ensembles. This contrast is further seen by the stark drop in the top 10 stability plot between *TFF3* and *APOC1*, possibly suggesting that *APOC1* is not as stably important as the other top genes and perhaps should be excluded from the final sMPS2 model.
+- Across the different PCS ensembles, the 7th-ranked gene (*CAMKK2* in the original PCS ensemble and *ERG* in the balanced PCS ensembles) and onward appear to have substantially more unstable gene rankings compared to the top 6 genes (as made evident in the SD Rank subplots). For this reason, we chose not to include these genes in the final sMPS2 model.
+- Overall, this stability analysis provided crucial information to help us decide which genes to include in the final sMPS2 model. More specifically, using evidence provided by this stability analysis, we decided to include *T2:ERG*, *SCHLAP1*, *OR51E2*, *PCAT14*, *TFF3*, and *PCA3* in the final s<sup>7</sup>MPS2 model. Given the borderline status of *APOC1*, we also developed the s<sup>8</sup>MPS2 model, which includes all of the genes from s<sup>7</sup>MPS2 and *APOC1*.
+
+To supplement this stability analysis, we also provide a more granular view of the gene rankings per data preprocessing pipeline and model in the `Gene Ranking Heatmap` tab. These heatmaps showcase both genes that are stably important across all data preprocessing pipelines and methods as well as genes that are stably important across only a subset of data preprocessing pipelines and/or methods. In particular, these heatmaps confirm that the logistic regression model drives much of the instability that we observed previously in the *PCA3* gene rankings.
+
+</div>
+
+```{r feature-rankings, results = "asis"}
+max_vars <- 15
+top_vars <- c("T2:ERG", "SCHLAP1", "OR51E2", "TFF3", "PCAT14", "PCA3")
+mid_vars <- c("APOC1")
+facet_vars_order <- c(
+  "Mean Rank", 
+  "SD Rank", 
+  "Top 5 Stability", 
+  "Top 10 Stability", 
+  "Top 17 Stability"
+)
+
+vimps_df <- dplyr::bind_rows(vimps_ls) |>
+  dplyr::mutate(
+    `Variable Name` = dplyr::case_when(
+      `Variable Name` == "T2ERG" ~ "T2:ERG",
+      TRUE ~ `Variable Name`
+    ),
+    `Top 17` = Rank <= 17,
+    `Top 10` = Rank <= 10,
+    `Top 5` = Rank <= 5
+  )
+
+cat("\n\n## Gene Ranking Summary {.unnumbered .tabset .tabset-pills .tabset-square}\n\n")
+
+keep_methods_ls <- list(
+  "All Methods" = unique(vimps_df$Method),
+  "RF, RF+, Elastic Net, Ridge" = c(
+    "RF", "RF+", "Logistic\nRidge", "Logistic\nElastic Net"
+  ),
+  "RF, RF+, Elastic Net, Lasso" = c(
+    "RF", "RF+", "Logistic\nLasso", "Logistic\nElastic Net"
+  ),
+  "RF, RF+, Elastic Net, Logistic" = c(
+    "RF", "RF+", "Logistic", "Logistic\nElastic Net"
+  )
+)
+
+plt_ls <- list()
+for (keep_methods_name in names(keep_methods_ls)) {
+  cat(sprintf("\n\n### Aggregating %s {.unnumbered}\n\n", keep_methods_name))
+  plt_df <- vimps_df |>
+    dplyr::filter(
+      Method %in% !!keep_methods_ls[[keep_methods_name]]
+    ) |>
+    dplyr::group_by(`Variable Name`) |>
+    dplyr::summarise(
+      `Mean Rank` = mean(Rank),
+      `SD Rank` = sd(Rank),
+      `Top 17 Stability` = mean(`Top 17`),
+      `Top 10 Stability` = mean(`Top 10`),
+      `Top 5 Stability` = mean(`Top 5`),
+      .groups = "keep"
+    ) |>
+    dplyr::arrange(`Mean Rank`) |>
+    dplyr::ungroup()
+  dummy_data <- tibble::tibble(
+    range = rep(c(0, 1), times = 3),
+    `Name` = rep(
+      c("Top 5 Stability", "Top 10 Stability", "Top 17 Stability"), 
+      each = 2
+    ) |> 
+      factor(levels = facet_vars_order)
+  )
+  
+  plt <- plt_df |>
+    dplyr::mutate(
+      `Variable Name` = forcats::fct_inorder(`Variable Name`),
+      `Variable Color` = dplyr::case_when(
+        `Variable Name` %in% !!top_vars ~ "top",
+        `Variable Name` %in% !!mid_vars ~ "mid",
+        TRUE ~ "none"
+      )
+    ) |>
+    tidyr::pivot_longer(
+      cols = -c(`Variable Name`, `Variable Color`),
+      names_to = "Name", values_to = "Value"
+    ) |>
+    dplyr::mutate(
+      Name = factor(Name, levels = facet_vars_order)
+    ) |> 
+    vdocs::plot_bar(
+      x_str = "Variable Name", y_str = "Value", fill_str = "Variable Color",
+      stat = "identity", 
+      theme_options = list(
+        size_preset = "large",
+        x_text_angle = TRUE, 
+        strip_bg_color = "white"
+      )
+    ) +
+    ggplot2::facet_grid(Name ~ ., scales = "free_y", switch = "y") +
+    ggplot2::geom_blank(
+      ggplot2::aes(y = range), 
+      inherit.aes = FALSE,
+      data = dummy_data
+    ) +
+    ggplot2::labs(x = "Gene", y = "") +
+    ggplot2::scale_fill_manual(values = c("#c7dadb", "gray", "#569297")) +
+    ggplot2::guides(fill = "none") +
+    ggplot2::theme(
+      axis.text.y = ggplot2::element_text(size = 12),
+      axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust = 1),
+      strip.text.y = ggplot2::element_text(color = "black"),
+      strip.placement = "outside"
+    )
+  plt_ls[[keep_methods_name]] <- plt
+  vthemes::subchunkify(
+    plotly::ggplotly(plt), i = subchunk_idx,
+    fig_height = 12, fig_width = 14, 
+    add_class = padded_panel_class, other_args = "out.width='100%'",
+    caption = sprintf(
+      "'Summary of the gene importance rankings, as measuerd by their mean gene ranking across four data preprocessing pipelines and %1$s prediction-checked models (%2$s), the variability of their gene rankings as measured by the standard deviation (SD) of this distribution, and the proportion of times that the gene appeared int he top 5, 10, and 17 genes. The six genes highlighted in dark teal were used in the s<sup>7</sup>MPS2 model. The APOC1 gene, highlighted in light teal, was used in the s<sup>8</sup>MPS2 model.'",
+      length(keep_methods_ls[[keep_methods_name]]),
+      paste(
+        sort(stringr::str_replace(keep_methods_ls[[keep_methods_name]], "\n", " ")),
+        collapse = ", "
+      )
+    )
+  )
+  subchunk_idx <- subchunk_idx + 1
+  
+  plt <- plt_df |>
+    dplyr::slice_min(`Mean Rank`, n = max_vars) |> 
+    dplyr::mutate(
+      `Variable Name` = forcats::fct_inorder(`Variable Name`),
+      `Variable Color` = dplyr::case_when(
+        `Variable Name` %in% !!top_vars ~ "top",
+        `Variable Name` %in% !!mid_vars ~ "mid",
+        TRUE ~ "none"
+      )
+    ) |>
+    tidyr::pivot_longer(
+      cols = -c(`Variable Name`, `Variable Color`),
+      names_to = "Name", values_to = "Value"
+    ) |>
+    dplyr::mutate(
+      Name = stringr::str_replace(Name, " Stability", "\nStability") |>
+        factor(
+          levels = stringr::str_replace(facet_vars_order, " Stability", "\nStability")
+        )
+    ) |> 
+    vdocs::plot_bar(
+      x_str = "Variable Name", y_str = "Value", fill_str = "Variable Color",
+      stat = "identity", 
+      theme_options = list(
+        size_preset = "large",
+        x_text_angle = TRUE, 
+        strip_bg_color = "white"
+      )
+    ) +
+    ggplot2::facet_grid(Name ~ ., scales = "free_y", switch = "y") +
+    ggplot2::geom_blank(
+      ggplot2::aes(y = range), 
+      inherit.aes = FALSE,
+      data = dummy_data |> 
+        dplyr::mutate(
+          Name = stringr::str_replace(Name, " Stability", "\nStability") |>
+            factor(
+              levels = stringr::str_replace(facet_vars_order, " Stability", "\nStability")
+            )
+        )
+    ) +
+    ggplot2::labs(x = "Gene", y = "") +
+    ggplot2::scale_fill_manual(values = c("#c7dadb", "gray", "#569297")) +
+    ggplot2::guides(fill = "none") +
+    ggplot2::theme(
+      axis.text.y = ggplot2::element_text(size = 12),
+      axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust = 1),
+      strip.text.y = ggplot2::element_text(color = "black"),
+      strip.placement = "outside"
+    )
+  for (img_type in img_types) {
+    ggplot2::ggsave(
+      plt, 
+      filename = file.path(
+        FIGURES_PATH, 
+        sprintf("feature_stability_%s.%s", keep_methods_name, img_type)
+      ), 
+      width = 6, 
+      height = 10
+    )
+  }
+}
+
+cat("\n\n## Gene Ranking Heatmap {.unnumbered .tabset .tabset-pills .tabset-square}\n\n")
+
+var_order <- levels(plt_ls[["All Methods"]]$data[["Variable Name"]])
+
+plt_df <- vimps_df |> 
+  dplyr::select(Rep, Method, Pipeline, `Variable Name`, Rank) |> 
+  dplyr::group_by(Method, Pipeline, `Variable Name`) |> 
+  dplyr::summarise(
+    Rank = mean(Rank),
+    .groups = "drop"
+  )
+plt_df_wide <- plt_df |> 
+  tidyr::pivot_wider(
+    id_cols = c(Method, Pipeline),
+    names_from = `Variable Name`, 
+    values_from = Rank
+  ) |> 
+  dplyr::mutate(
+    `Pipeline Name` = paste(Method, Pipeline, sep = ", ") |> 
+      stringr::str_replace("\n", " "),
+    Method = stringr::str_replace(Method, "\n", " ")
+  ) |> 
+  tibble::column_to_rownames("Pipeline Name")
+plt <- vdocs::plot_heatmap(
+  plt_df_wide[, var_order], y_groups = plt_df_wide$Method,
+  size_preset = "medium"
+) +
+  viridis::scale_fill_viridis(
+    option = "magma", direction = -1, begin = 0.25, end = 1
+  ) +
+  ggplot2::labs(
+    x = "Gene", y = "Data Preprocessing Pipeline", fill = "Rank"
+  ) +
+  ggplot2::theme(
+    axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust = 1)
+  )
+vthemes::subchunkify(
+  plotly::ggplotly(plt), i = subchunk_idx,
+  fig_height = 13, fig_width = 14, 
+  add_class = padded_panel_class, other_args = "out.width='100%'",
+  caption = "'Heatmap of the mean gene ranking (averaged across 10 Development-Test splits) per data preprocessing pipeline and model choice.'"
+)
+subchunk_idx <- subchunk_idx + 1
+
+plt <- vdocs::plot_heatmap(
+  plt_df_wide[, var_order[1:15]], y_groups = plt_df_wide$Method, text_size = 4,
+  size_preset = "medium"
+) +
+  viridis::scale_fill_viridis(
+    option = "magma", direction = -1, begin = 0.25, end = 1
+  ) +
+  ggplot2::labs(
+    x = "Gene", y = "Data Preprocessing Pipeline", fill = "Rank"
+  ) +
+  ggplot2::theme(
+    axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust = 1)
+  )
+for (img_type in img_types) {
+  ggplot2::ggsave(
+    plt, 
+    filename = file.path(
+      FIGURES_PATH, 
+      sprintf("feature_ranking_summary.%s", img_type)
+    ), 
+    width = 13, 
+    height = 10
+  )
+}
+
+plt_df <- vimps_df |> 
+  dplyr::select(Rep, Method, Pipeline, `Variable Name`, Rank)
+plt_df_wide <- plt_df |> 
+  tidyr::pivot_wider(
+    id_cols = c(Method, Pipeline, Rep),
+    names_from = `Variable Name`, 
+    values_from = Rank
+  ) |> 
+  dplyr::mutate(
+    `Pipeline Name` = paste(Method, Pipeline, sep = ", ") |> 
+        stringr::str_replace("\n", " ")
+  )
+plt <- vdocs::plot_heatmap(
+  plt_df_wide[, var_order], y_groups = plt_df_wide$`Pipeline Name`, 
+  show_ytext = FALSE, size_preset = "large", strip_bg_color = "white"
+) +
+  viridis::scale_fill_viridis(
+    option = "magma", direction = -1, begin = 0.25, end = 1
+  ) +
+  ggplot2::labs(
+    x = "Gene", y = "Replicate", fill = "Rank"
+  ) +
+  ggplot2::theme(
+    axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5, hjust = 1),
+    strip.text.y = ggplot2::element_text(color = "black", angle = 0)
+  )
+vthemes::subchunkify(
+  plt, i = subchunk_idx,
+  fig_height = 14, fig_width = 18, 
+  add_class = panel_class, 
+  caption = "'Heatmap of the gene ranking per data preprocessing pipeline, model, and Development-Test split. Each row corresponds to a different Development-Test split for the data preprocessing pipeline and model choice labeled on the right.'"
+)
+subchunk_idx <- subchunk_idx + 1
+```
+
+# Validation {.tabset .tabset-vmodern}
+
+<div class="panel panel-default padded-panel">
+We next assessed the impact of the choice of gene panel size (i.e,. the number of top-ranked genes used in the sMPS2 model) and the gene ranking strategy (i.e., model-specific versus model-ensembled versus PCS-ensembled) on the prediction accuracy, evaluated on the test set (from the Development-Test split). Test prediction accuracies are averaged across 10 different Development-Test splits. In this section, we summarize these test prediction results (measured via AUROC, AUPRC, and classification accuracy) across the different gene panel sizes, gene ranking strategies, data preprocessing pipelines, and model choices. In general, the results suggest that 6 or 7 genes are sufficient to achieve competitive prediction performance, and that the PCS-ensembled gene ranking strategy is the most robust across different data preprocessing pipelines and model choices.
+
+In [@tang2024simplified](https://journals.sagepub.com/doi/10.1177/18758592241308755), we additionally conducted and detailed an external validation study, which confirmed the strong prediction accuracy of the sMPS2 models. However, given the blinded nature of the external validation study, the data is not accessible by the co-first authors for use in this PCS documentation. We refer the reader to the original publication for details.
+</div>
+
+```{r load-validation-results, results = "asis"}
+test_errs_ls <- list()
+for (topk_mode_idx in seq_along(TOPK_MODES)) {
+  topk_mode_name <- names(TOPK_MODES)[topk_mode_idx]
+  topk_mode <- TOPK_MODES[topk_mode_idx]
+  test_errs <- data.table::fread(
+    file.path(
+      RESULTS_PATH, 
+      "train_with_clinical", 
+      sprintf("test_errors_%s_scaled.csv", topk_mode)
+    )
+  ) |>
+    tibble::as_tibble() |>
+    dplyr::mutate(
+      pipeline = rename_pipelines(pipeline),
+      method = rename_methods(method)
+    ) |>
+    dplyr::filter(
+      eval_type == "eval_with_clinical"
+    ) |> 
+    dplyr::rename_with(~ rename_cols(.x)) |>
+    tidyr::pivot_longer(
+      cols = tidyselect::all_of(metrics), 
+      names_to = "Metric", values_to = "Value"
+    )
+  test_errs_summary <- test_errs |>
+    dplyr::group_by(
+      Pipeline, `# Top Features`, Method, Metric
+    ) |>
+    dplyr::summarise(
+      Mean = mean(Value),
+      SD = sd(Value),
+      .groups = "keep"
+    )
+  test_errs_ls[[topk_mode_name]] <- test_errs_summary
+}
+```
+
+```{r test-errs-summary, results = "asis"}
+test_errs_df <- dplyr::bind_rows(test_errs_ls, .id = "Top K Mode") |> 
+  dplyr::mutate(
+    `Top K Mode` = factor(`Top K Mode`, levels = names(TOPK_MODES)),
+    Pipeline = factor(Pipeline, levels = names(PIPELINES))
+  )
+for (metric in metrics) {
+  cat(
+    sprintf(
+      "\n\n## %s {.unnumbered .tabset .tabset-pills .tabset-square}\n\n", 
+      metric
+    )
+  )
+  
+  plt_df <- test_errs_df |> 
+    dplyr::filter(
+      Metric == !!metric
+    )
+  plt <- plt_df |>
+    vdocs::plot_line(
+      x_str = "# Top Features", y_str = "Mean", color_str = "Top K Mode", 
+      size = 0.75,
+      theme_options = list(
+        size_preset = "medium"
+      )
+    ) +
+    ggplot2::geom_vline(
+      xintercept = 6, linetype = "dotted", color = "#404040"
+    ) +
+    ggplot2::geom_vline(
+      xintercept = 7, linetype = "longdash", color = "#404040"
+    ) +
+    ggplot2::facet_grid(Method ~ Pipeline, scales = "free") +
+    ggplot2::labs(
+      x = "Number of Predictor Genes",
+      y = sprintf("Mean %s", metric),
+      color = "Gene Ranking\nMode", 
+      fill = "Gene Ranking\nMode",
+      linetype = "Gene Ranking\nMode"
+    ) +
+    ggplot2::scale_color_manual(
+      values = rev(c("black", "orange", "#71BEB7"))
+    ) +
+    ggplot2::scale_fill_manual(
+      values = rev(c("black", "orange", "#71BEB7"))
+    ) +
+    ggplot2::guides(
+      color = ggplot2::guide_legend(reverse = TRUE),
+      fill = ggplot2::guide_legend(reverse = TRUE)
+    )
+  vthemes::subchunkify(
+    plt, i = subchunk_idx,
+    fig_height = 12, fig_width = 12, 
+    add_class = panel_class,
+    caption = sprintf(
+      "'Mean %1$s, evaluated on test set, when training various models (rows) using various choices of gene panel sizes (x-axis), data preprocessing pipelines (columns), and gene rankings (color). The PCS-ensembled gene rankings (in black) generally yield the highest test %1$ss compared to other procedures for obtaining the gene rankings. Moreover, using 6 or 7 predictor genes (vertical dotted and dashed lines, respectively) yields very competitive test prediction performance and is often comparable to the high achieved %1$s.'",
+      metric
+    )
+  )
+  subchunk_idx <- subchunk_idx + 1
+  
+  for (img_type in img_types) {
+    ggplot2::ggsave(
+      plt, 
+      filename = file.path(
+        FIGURES_PATH, 
+        sprintf("test_errs_%s.%s", metric, img_type)
+      ), 
+      width = 13, 
+      height = 12
+    )
+  }
+}
+```
+
+# Final Remarks
+
+<div class="panel panel-default padded-panel">
+In this PCS documentation [@yu2020veridical], we have shed additional light on the various decisions that were made throughout the development of the sMPS2 model and have justified many of these choices to the best of our ability. While we acknowledge that other equally-reasonable choices could have been made, we hope that this documentation will be a useful resource for researchers and clinicians who are interested in building upon this work. 
+</div>
+
+# Bibliography {.unnumbered}
+
+<div class="panel panel-default padded-panel">
+<div id="refs"></div>
+</div>
