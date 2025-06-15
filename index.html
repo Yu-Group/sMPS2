@@ -5,7 +5,8 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <meta name="generator" content="pandoc" />
 
-    
+        <meta name="author" content="Tiffany M Tang^*, Yuping Zhang^*, Ana M Kenney, Cassie Xie, Lanbo Xiao, Javed Siddiqui, Sudhir Srivastava, Martin G Sanda, John T Wei, Ziding Feng, Jeffrey J Tosoian, Yingye Zheng, Arul M Chinnaiyan, and Bin Yu; for the EDRN-PCA3 Study Group" />
+
         <meta name="date" content="2025-03-20" />
     
     <title>PCS documentation for the simplified MyProstateScore2.0 (sMPS2)</title>
@@ -4551,7 +4552,8 @@ display: none;
         <div class="col-xs-3">
 	  	  <div id="header">
 	    <h1 class="title">PCS documentation for the simplified MyProstateScore2.0 (sMPS2)</h1>
-	    	    	    	    <h4 class="date">March 20, 2025</h4>
+	    	    	    	    <h4 class="author">Tiffany M Tang<span class="math inline">\(^*\)</span>, Yuping Zhang<span class="math inline">\(^*\)</span>, Ana M Kenney, Cassie Xie, Lanbo Xiao, Javed Siddiqui, Sudhir Srivastava, Martin G Sanda, John T Wei, Ziding Feng, Jeffrey J Tosoian, Yingye Zheng, Arul M Chinnaiyan, and Bin Yu; for the EDRN-PCA3 Study Group</h4>
+                        <h4 class="date">March 20, 2025</h4>
 	    	  </div>
 	  	</div>
       </div>
@@ -4629,7 +4631,7 @@ margin-bottom: 0.5em;
 <div id="overview" class="section level1" number="1">
 <h1><span class="header-section-number">1</span> Overview</h1>
 <div class="panel panel-default padded-panel">
-<p>In <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2024)</span></a>, we developed the simplified MyProstateScore2.0 (sMPS2), a 7-gene urine test which achieves similar state-of-the-art diagnostic accuracy for predicting high-grade prostate cancer as the original 18-gene MyProstateScore2.0 (MPS2) <span class="citation">(Tosoian et al. 2024)</span>.
+<p>In <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2025)</span></a>, we developed the simplified MyProstateScore2.0 (sMPS2), a 7-gene urine test which achieves similar state-of-the-art diagnostic accuracy for predicting high-grade prostate cancer as the original 18-gene MyProstateScore2.0 (MPS2) <span class="citation">(Tosoian et al. 2024)</span>.
 This simplified biomarker test provides a more cost-effective alternative to the original MPS2 test and greatly increases its accessibility for routine clinical care.</p>
 <p>In this PCS documentation <span class="citation">(Yu and Kumbier 2020)</span>, we expand upon the sMPS2 model development pipeline, transparently documenting and justifying human judgment calls (including data preprocessing and modeling decisions) when possible.
 We also provide additional visualizations and stability analyses to further support the robustness and generalizability of the sMPS2 test.</p>
@@ -4694,9 +4696,9 @@ Figure 2.4: Distribution of clinical features in Development Cohort by prostate 
 <div id="data-preprocessing-choices" class="section level1 tabset tabset-vmodern" number="3">
 <h1><span class="header-section-number">3</span> Data Preprocessing Choices</h1>
 <div class="panel panel-default padded-panel">
-<p>As discussed in <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2024)</span></a>, gene expression in each urine sample was measured via the cycle threshold (Ct) using qPCR profiling across 54 genes.
+<p>As discussed in <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2025)</span></a>, gene expression in each urine sample was measured via the cycle threshold (Ct) using qPCR profiling across 54 genes.
 These 54 genes were previously nominated as potential biomarkers for prostate cancer (PCa) detection in the MPS2 study <span class="citation">(Tosoian et al. 2024)</span> and are thus of interest here.
-In what follows, we recap the data preprocessing procedure used in this study (also described in <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2024)</span></a>) and provide additional justification for our judgment calls wherever possible.</p>
+In what follows, we recap the data preprocessing procedure used in this study (also described in <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2025)</span></a>) and provide additional justification for our judgment calls wherever possible.</p>
 <p>As a starting point, we preprocessed the expression data as in the original MPS2 study <span class="citation">(Tosoian et al. 2024)</span>:</p>
 <ol style="list-style-type: decimal">
 <li><p>We set the upper Ct value limit to 35. Specifically, Ct values greater than this limit were considered undetected and set to 35. Ct values from OpenArray that were “Undetermined” or “Inconclusive/No Amp” were also considered to be undetected and set to the upper Ct value limit of 35.</p>
@@ -4744,7 +4746,7 @@ In what follows, we recap the data preprocessing procedure used in this study (a
 While the logistic-based models are generally thought to serve as baseline models, the tree-based models can provide greater flexibility to capture more complex relationships between genes and the outcome of interest without sacrificing interpretability.
 We note that other flexible but interpretable machine learning models could also be considered and may be of interest in future work.
 However, in this current work, we chose to first focus on these logistic-based models and tree-based models – the latter of which is often uniquely suited for biological tasks such as this, in part due to the resemblance between the thresholding behavior of decision trees and the on-off switch-like behavior commonly thought to govern genetic processes <span class="citation">(Nelson, Lehninger, and Cox 2008)</span>.</p>
-<p>We detailed the hyperparameters and python implementation used for each model in Table 1 in <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2024)</span></a>. Hyperparameters were tuned using 5-fold cross-validation.</p>
+<p>We detailed the hyperparameters and python implementation used for each model in Table 1 in <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2025)</span></a>. Hyperparameters were tuned using 5-fold cross-validation.</p>
 </div>
 </div>
 <div id="prediction-check" class="section level1 tabset tabset-vmodern" number="5">
@@ -4756,7 +4758,7 @@ However, in this current work, we chose to first focus on these logistic-based m
 <li>Ordinary logistic regression appears to have reasonable prediction performance (only <span class="math inline">\(\sim 1\%\)</span> lower than the best-performing model in terms of AUROC). Given its simplicity, we chose to use logistic regression as the baseline model to determine whether or not other models passed the prediction check.</li>
 <li>RuleFit, GBDT, and FIGS, on average, performed worse than logistic regression across the different prediction performance metrics, suggesting that they may not be appropriate fits for this data. RF also performed slightly worse than logistic regression on average. However, unlike RuleFit, GBDT, and FIGS, RF yielded higher prediction performance (measured via AUROC, AUPRC, and classification accuracy) than logistic regression in at least one data preprocessing pipeline. We thus excluded RuleFit, GBDT, and FIGS (but not RF) from the remainder of the model development pipeline.</li>
 </ul>
-<p>We defer additional methodological details on how this prediction check was conducted to <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2024)</span></a>.</p>
+<p>We defer additional methodological details on how this prediction check was conducted to <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2025)</span></a>.</p>
 </div>
 <div id="auroc" class="section level2 unnumbered tabset tabset-pills tabset-square">
 <h2>AUROC</h2>
@@ -4795,8 +4797,8 @@ Figure 5.3: (Left) For each choice of data preprocessing and prediction model, t
 <div id="stability-driven-gene-ranking" class="section level1 tabset tabset-vmodern" number="6">
 <h1><span class="header-section-number">6</span> Stability-driven Gene Ranking</h1>
 <div class="panel panel-default padded-panel">
-<p>After filtering out the poor-performing prediction models, we sought next to identify the topmost important genes, which were stably important across all four data preprocessing pipelines, six prediction-checked models, and ten Development-Test splits (i.e., <span class="math inline">\(4 \times 6 \times 10 = 240\)</span> combinations). Details on how we computed the gene importances for each model are discussed in <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2024)</span></a>.</p>
-<p>We instead use this opportunity to conduct a stability analysis of the PCS-ensembled gene rankings. As discussed in <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2024)</span></a>, the obtained PCS-ensembled gene rankings are an ensemble of gene rankings across four different data preprocessing pipelines and six prediction-checked models (RF, RF+, logistic elastic net, logistic LASSO, logistic ridge, and ordinary logistic regression). We chose to use these six prediction models since each passed the prediction check. However, it is natural to wonder whether the PCS-ensembled gene rankings would change if a different subset of the prediction-checked prediction models were used. In particular, since the original set of prediction models consisted of four logistic-based models and two tree-based models, we investigated how the PCS-ensembled gene rankings would change if we used a “balanced” set of prediction models, composed of two logistic-based models and two tree-based models.</p>
+<p>After filtering out the poor-performing prediction models, we sought next to identify the topmost important genes, which were stably important across all four data preprocessing pipelines, six prediction-checked models, and ten Development-Test splits (i.e., <span class="math inline">\(4 \times 6 \times 10 = 240\)</span> combinations). Details on how we computed the gene importances for each model are discussed in <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2025)</span></a>.</p>
+<p>We instead use this opportunity to conduct a stability analysis of the PCS-ensembled gene rankings. As discussed in <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2025)</span></a>, the obtained PCS-ensembled gene rankings are an ensemble of gene rankings across four different data preprocessing pipelines and six prediction-checked models (RF, RF+, logistic elastic net, logistic LASSO, logistic ridge, and ordinary logistic regression). We chose to use these six prediction models since each passed the prediction check. However, it is natural to wonder whether the PCS-ensembled gene rankings would change if a different subset of the prediction-checked prediction models were used. In particular, since the original set of prediction models consisted of four logistic-based models and two tree-based models, we investigated how the PCS-ensembled gene rankings would change if we used a “balanced” set of prediction models, composed of two logistic-based models and two tree-based models.</p>
 <p>Below in the <code>Gene Ranking Summary</code> tab, we examined the PCS-ensembled gene rankings, ensembled across all four data preprocessing pipelines and</p>
 <ul>
 <li>all six prediction-checked models (RF, RF+, logistic elastic net, logistic LASSO, logistic ridge, and ordinary logistic regression)</li>
@@ -4895,7 +4897,7 @@ Figure 6.6: Heatmap of the gene ranking per data preprocessing pipeline, model, 
 <h1><span class="header-section-number">7</span> Validation</h1>
 <div class="panel panel-default padded-panel">
 <p>We next assessed the impact of the choice of gene panel size (i.e,. the number of top-ranked genes used in the sMPS2 model) and the gene ranking strategy (i.e., model-specific versus model-ensembled versus PCS-ensembled) on the prediction accuracy, evaluated on the test set (from the Development-Test split). Test prediction accuracies are averaged across 10 different Development-Test splits. In this section, we summarize these test prediction results (measured via AUROC, AUPRC, and classification accuracy) across the different gene panel sizes, gene ranking strategies, data preprocessing pipelines, and model choices. In general, the results suggest that 6 or 7 genes are sufficient to achieve competitive prediction performance, and that the PCS-ensembled gene ranking strategy is the most robust across different data preprocessing pipelines and model choices.</p>
-<p>In <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2024)</span></a>, we additionally conducted and detailed an external validation study, which confirmed the strong prediction accuracy of the sMPS2 models. However, given the blinded nature of the external validation study, the data is not accessible by the co-first authors for use in this PCS documentation. We refer the reader to the original publication for details.</p>
+<p>In <a href="https://journals.sagepub.com/doi/10.1177/18758592241308755"><span class="citation">Tang et al. (2025)</span></a>, we additionally conducted and detailed an external validation study, which confirmed the strong prediction accuracy of the sMPS2 models. However, given the blinded nature of the external validation study, the data is not accessible by the co-first authors for use in this PCS documentation. We refer the reader to the original publication for details.</p>
 </div>
 <div id="auroc-1" class="section level2 unnumbered tabset tabset-pills tabset-square">
 <h2>AUROC</h2>
@@ -4948,7 +4950,7 @@ McCall, Matthew N, Helene R McMurray, Hartmut Land, and Anthony Almudevar. 2014.
 Nelson, David L, Albert L Lehninger, and Michael M Cox. 2008. <em>Lehninger Principles of Biochemistry</em>. Macmillan.
 </div>
 <div id="ref-tang2024simplified" class="csl-entry">
-Tang, Tiffany M, Yuping Zhang, Ana M Kenney, Cassie Xie, Yingye Zheng, Jeffrey J Tosoian, Lanbo Xiao, et al. 2024. <span>“A Simplified MyProstateScore2.0 for High-Grade Prostate Cancer.”</span>
+Tang, Tiffany M, Yuping Zhang, Ana M Kenney, Cassie Xie, Yingye Zheng, Jeffrey J Tosoian, Lanbo Xiao, et al. 2025. <span>“A Simplified MyProstateScore2.0 for High-Grade Prostate Cancer.”</span> <em>Cancer Biomarkers</em> 42 (1): 18758592241308755.
 </div>
 <div id="ref-thompson2006assessing" class="csl-entry">
 Thompson, Ian M, Donna Pauler Ankerst, Chen Chi, Phyllis J Goodman, Catherine M Tangen, M Scott Lucia, Ziding Feng, Howard L Parnes, and Charles A Coltman Jr. 2006. <span>“Assessing Prostate Cancer Risk: Results from the Prostate Cancer Prevention Trial.”</span> <em>Journal of the National Cancer Institute</em> 98 (8): 529–34.
